@@ -1,16 +1,17 @@
 """
 Order execution for the auto trader, behind one small interface:
 
-  PaperBroker   — simulated fills at the live Binance price, with
+  PaperBroker   — DEMO mode: simulated fills at the live Binance price, with
                   config.TAKER_FEE and config.SLIPPAGE, USDT balance kept in
-                  SQLite. No API key, no real orders.
-  BinanceBroker — real spot orders through ccxt, on the Binance spot testnet
-                  (TRADING_MODE=testnet) or the real exchange (TRADING_MODE=live).
-                  Places an exchange-side STOP_LOSS_LIMIT after every buy so a
-                  position stays protected even if this bot crashes.
+                  MySQL. No API key, no real orders.
+  BinanceBroker — REAL mode: real spot orders through ccxt at
+                  config.BINANCE_API_URL. Places an exchange-side
+                  STOP_LOSS_LIMIT after every buy so a position stays
+                  protected even if this bot crashes.
 
-API keys come only from the environment (.env) — never hardcode them. Give
-the key trading permission only (NO withdrawals) and restrict it to your IP.
+API keys come only from the MySQL `credentials` table (Settings page) — never
+hardcode them. Give the key trading permission only (NO withdrawals) and
+restrict it to your IP.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import ccxt
 
 import config
 import db
-from data_fetcher import get_exchange
+from data_fetcher import apply_binance_url, get_exchange
 
 
 @dataclass
@@ -132,22 +133,18 @@ class PaperBroker:
 
 
 class BinanceBroker:
+    mode = "live"
     has_exchange_stops = True
 
-    def __init__(self, mode: str):
+    def __init__(self):
         if not config.BINANCE_API_KEY or not config.BINANCE_API_SECRET:
-            raise BrokerError("BINANCE_API_KEY / BINANCE_API_SECRET not set in .env")
-        if mode == "live" and config.LIVE_TRADING_CONFIRM != "YES_REAL_MONEY":
-            raise BrokerError("TRADING_MODE=live also needs LIVE_TRADING_CONFIRM=YES_REAL_MONEY in .env")
-        self.mode = mode
-        self.ex = ccxt.binance({
+            raise BrokerError("Binance API key / secret not set — add them in Settings > Credentials")
+        self.ex = apply_binance_url(ccxt.binance({
             "apiKey": config.BINANCE_API_KEY,
             "secret": config.BINANCE_API_SECRET,
             "enableRateLimit": True,
             "options": {"defaultType": "spot", "fetchMarkets": ["spot"]},
-        })
-        if mode == "testnet":
-            self.ex.set_sandbox_mode(True)
+        }))
         self.ex.load_markets()
         self.ex.fetch_balance()   # fail fast on bad keys / permissions
 
@@ -263,6 +260,6 @@ def make_broker(mode: str | None = None):
     mode = (mode or config.TRADING_MODE).lower()
     if mode == "paper":
         return PaperBroker()
-    if mode in ("testnet", "live"):
-        return BinanceBroker(mode)
-    raise BrokerError(f"Unknown TRADING_MODE '{mode}' (use paper / testnet / live)")
+    if mode == "live":
+        return BinanceBroker()
+    raise BrokerError(f"Unknown trading mode '{mode}' (use paper = Demo / live = Real)")

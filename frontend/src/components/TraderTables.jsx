@@ -1,11 +1,11 @@
 import { useApp } from '../lib/AppContext';
 import { dateTimeStr, fmt4, money, pnlClass, signed, timeStr, usd } from '../lib/format';
 
-export const MODE_LABEL = { paper: 'DEMO', testnet: 'BINANCE TESTNET', live: 'BINANCE LIVE' };
+export const MODE_LABEL = { paper: 'DEMO', live: 'REAL' };
 
 export function ModeBadge({ mode }) {
   if (!mode) return null;
-  const cls = mode === 'live' ? 'entry-short' : mode === 'testnet' ? 'entry-avoid' : 'entry-wait';
+  const cls = mode === 'live' ? 'entry-short' : 'entry-wait';
   return <span className={'entry-badge ' + cls}>{MODE_LABEL[mode] || mode.toUpperCase()}{mode === 'live' ? ' — REAL MONEY' : ''}</span>;
 }
 

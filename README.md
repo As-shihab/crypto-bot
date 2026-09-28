@@ -14,7 +14,14 @@ cd crypto-analysis-bot
 python3 -m venv venv
 source venv/bin/activate      # Windows: venv\Scripts\activate
 pip install -r requirements.txt
+cp .env.example .env          # then fill in your MySQL login
 ```
+
+Storage is **MySQL**. `.env` holds only the MySQL login (`MYSQL_HOST`,
+`MYSQL_PORT`, `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD`); the
+database must already exist; the app creates its tables on first start. Everything else — Binance
+API key/secret/URL, Telegram, SMTP — is stored in the MySQL `credentials`
+table and edited on the dashboard's **Settings → Credentials** card.
 
 Build the web frontend once (React + Vite, needs Node 18+):
 
@@ -50,8 +57,9 @@ explains what each piece does and how to read the output.
 | `forecast.py` | Prophet-based trend forecast (day/month/year) on daily closes — separate from the rules-based signal. |
 | `live_trade.py` | Real-time trade recommendation for one coin + timeframe: live signal, checklist, entry/stop/targets. |
 | `auto_trader.py` | Auto trader: scans every coin x timeframe, opens the best confirmed long, manages stop/TP1/TP2/time exits. |
-| `broker.py` | Order execution: paper (simulated), Binance spot testnet, or Binance live via ccxt. |
-| `db.py` | SQLite storage (`trading.db`): trades/holdings, orders, fills, ledger, equity snapshots, events, state. |
+| `broker.py` | Order execution: Demo (simulated) or Real (Binance via ccxt, at the configured API URL). |
+| `db.py` | MySQL storage: trades/holdings, orders, fills, ledger, equity snapshots, events, state, credentials. |
+| `credentials.py` | Binance key/secret/API URL, Telegram and SMTP settings in the MySQL `credentials` table (secrets never sent to the browser). |
 | `order_desk.py` | Spot order desk for the Trade page: market/limit buy & sell, holdings, reserved balances. |
 | `notifier.py` | SMTP email on every trade open/close, daily-loss halt and errors. |
 | `frontend/` | React web app (Vite): Dashboard, Trade, Auto trader, History, Settings pages. |
@@ -131,7 +139,13 @@ indicators behind it, e.g.:
   (Asia/Dhaka) on a 12-hour clock. Pages fit the window (SAP Fiori /
   UI5-style layout) — only panels scroll, except on small screens.
 - **Frontend** — `frontend/` (React 18, Vite, react-router, lightweight-charts,
-  Chart.js). Sidebar pages:
+  Chart.js). The header has the **Demo | Real** switch (starts on Demo every
+  time the app starts): it picks where new trades go and which account the
+  Trade, Account, Auto trader and Settings pages show. Demo simulates fills at
+  real Binance prices with fees and needs no Binance account or keys; Real
+  places real orders with real money on Binance and unlocks once the Binance
+  API key and secret are saved in Settings → Credentials. Open trades in the
+  other mode keep their stops/targets managed. Sidebar pages:
   - **Dashboard** — chart (candles, volume, RSI, MACD, live price, forecast,
     entry/stop/TP lines) with Trade now / Signal / Position / Forecast / Best
     time / Backtest / Markets tabs.
@@ -141,17 +155,14 @@ indicators behind it, e.g.:
     (Limit or Market, amount or total, 25/50/75/100% of available, optional
     TP/SL with "use bot levels"). Bottom tabs: open orders (cancel), order
     history, holdings (sell all), trade history (every fill, whoever caused
-    it) and the bot's signal. **Demo | Binance** switch: Demo simulates fills
-    at real Binance prices with fees and needs no Binance account or keys;
-    Binance places real orders (live, or the spot testnet with
-    `BINANCE_TESTNET=1`) and unlocks once `BINANCE_API_KEY`/`BINANCE_API_SECRET`
-    (and for live `LIVE_TRADING_CONFIRM=YES_REAL_MONEY`) are in `.env`.
-    Demo limit orders fill when the price crosses; Binance limits rest on the
-    exchange. Funds held by open orders aren't available for new ones.
-  - **Demo account** — your play-money account: deposit / withdraw / reset,
-    equity, P&L and return vs what you put in, an equity curve, and tabs for
-    open trades, all trades, the cash **ledger** (every deposit, buy, sell) and
-    logs. Includes the **forecast bot**: pick coins, a horizon (15m … 1 year),
+    it) and the bot's signal. Demo limit orders fill when the price
+    crosses; Real limits rest on the exchange. Funds held by open orders aren't available for new ones.
+  - **Account** — the account picked in the header. Demo: your play-money
+    account — deposit / withdraw / reset, equity, P&L and return vs what you
+    put in, an equity curve, and tabs for open trades, all trades, the cash
+    **ledger** (every deposit, buy, sell) and logs. Real: your Binance USDT
+    balance, equity curve, P&L of the bot's trades, open trades, every fill and
+    logs (deposit / withdraw on Binance itself). Demo includes the **forecast bot**: pick coins, a horizon (15m … 1 year),
     % of cash per trade, minimum signal/noise and minimum move; each new candle
     it re-fits Prophet per coin and buys when the projected move beats costs and
     its own uncertainty band, then exits at the forecast target, the lower band
@@ -159,15 +170,18 @@ indicators behind it, e.g.:
     are listed live.
   - **Auto trader** — mode, equity, pause/resume, close all, open trades, last
     scan (why each coin/timeframe wasn't traded), event log.
-  - **History** — every trade in SQLite, filter by mode/coin, stats, CSV export.
-  - **Settings** — mode, limits, entry rules, email status + test email,
-    security checklist (read-only; edit `.env` / `config.py`).
+  - **History** — every trade in MySQL, filter by mode/coin, stats, CSV export.
+  - **Settings** (pinned to the bottom of the sidebar) — mode, limits, entry
+    rules, email status + test email, security checklist, and **Credentials**:
+    Binance API key / secret / API URL, Telegram API URL / bot token / chat ID,
+    SMTP host / port / SSL / user / password / from / to. Saved secrets show
+    masked; leave a secret blank to keep it.
 - **Develop the frontend**: run `python dashboard.py`, then `cd frontend && npm run dev`
   and open http://localhost:5173 (Vite proxies `/api` and `/socket.io` to :3100).
 
 The trader always runs inside the dashboard so manual trades get managed;
 it only opens trades by itself when **Auto trade** is ON in Settings (saved in
-SQLite, default OFF). A DB lock refuses
+MySQL, default OFF). A DB lock refuses
 to start a second trader (e.g. `python auto_trader.py`) on the same database.
 
 ### What the analysis tabs show
@@ -220,12 +234,12 @@ This is a purely statistical trend extrapolation — it does not feed into
 the BUY/SELL/HOLD signal above, and per `forecast.py`'s docstring, the
 widening uncertainty band further out is the honest part of the output.
 
-For Telegram alerts, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
-(via a `.env` file or environment variables) — get a token from
+For Telegram alerts, fill in the Telegram bot token and chat ID in
+Settings → Credentials — get a token from
 [@BotFather](https://t.me/BotFather) and your chat ID from
 [@userinfobot](https://t.me/userinfobot).
 
-## Step 3 — auto trading (paper → testnet → live)
+## Step 3 — auto trading (Demo → Real)
 
 `auto_trader.py` turns the live analysis into trades. **Spot, long only**
 (Binance spot can't short — a SELL signal only closes an open long).
@@ -238,7 +252,7 @@ coin+timeframe with positive expectancy over ≥20 trades), ranks them by
 quality and opens the best ones. Every `AUTO_MANAGE_SECONDS` it manages
 open trades:
 
-- **Stop** — on testnet/live a `STOP_LOSS_LIMIT` order sits on the exchange,
+- **Stop** — in Real mode a `STOP_LOSS_LIMIT` order sits on the exchange,
   so the position is protected even if the bot crashes.
 - **TP1 (1R)** — sells `TP1_CLOSE_FRACTION` (50%) and moves the stop to
   breakeven (+fees).
@@ -248,25 +262,25 @@ open trades:
 Risk controls in `config.py`: `RISK_PER_TRADE_PCT` sizing, `MAX_POSITION_USD`
 cap, `MAX_OPEN_TRADES`, one trade per coin, `SYMBOL_COOLDOWN_MINUTES`,
 `DAILY_LOSS_LIMIT_PCT` (halts new entries until 00:00 UTC), and a pause
-switch in the dashboard. Every trade and event lands in SQLite
-(`trading.db`), and you get an email for each open and close.
+switch in the dashboard. Every trade and event lands in MySQL, and you get
+an email for each open and close.
 
-Setup (`cp .env.example .env`, then edit):
+Setup (`.env` = MySQL login only; the rest in Settings → Credentials):
 
-1. **Email** — `SMTP_HOST/PORT/USER/PASSWORD`, `EMAIL_FROM`, `EMAIL_TO`. For
-   Gmail use an App Password, not your normal password.
-2. **Paper first** (`TRADING_MODE=paper`, the default) — simulated fills at
-   live prices with fees and slippage, starting from `PAPER_START_BALANCE`.
-   No API key. Run it for weeks.
-3. **Testnet** — `TRADING_MODE=testnet` with keys from
-   https://testnet.binance.vision (fake funds, real order flow — this is
-   where the exchange-side stop and precision handling get proven).
-4. **Live** — `TRADING_MODE=live` *and* `LIVE_TRADING_CONFIRM=YES_REAL_MONEY`.
-   Create the Binance API key with **Spot trading only — never enable
-   withdrawals** — and restrict it to your server's IP.
+1. **Email** — SMTP host / port / user / password, From, To. For Gmail use
+   an App Password, not your normal password.
+2. **Demo first** (the default) — simulated fills at live prices with fees
+   and slippage, starting from `PAPER_START_BALANCE`. No API key. Run it for
+   weeks.
+3. **Real** — save the Binance API key and secret, then switch the header
+   to Real (it asks for confirmation). Create the key with **Spot
+   trading only — never enable withdrawals** — and restrict it to your
+   server's IP. To rehearse with fake funds first, set the Binance API URL
+   to `https://testnet.binance.vision` with testnet keys; set it back to
+   `https://api.binance.com` for real money.
 
 Switch it on in the dashboard's **Settings** page (Auto trade: On), which is saved
-in SQLite and applies to the active account. Run it either inside the dashboard (`python dashboard.py`,
+in MySQL and applies to the active mode. Run it either inside the dashboard (`python dashboard.py`,
 "Auto trader" page) or headless (`python auto_trader.py`) — not both at once
 (a DB lock enforces this). The dashboard now listens on `127.0.0.1` only (it can
 close positions); don't expose it to the internet without auth.

@@ -1,6 +1,6 @@
 """
 Auto trader: scans every coin x timeframe, picks the strongest confirmed
-long setup, opens it, and manages it to exit — with an email and a SQLite
+long setup, opens it, and manages it to exit — with an email and a MySQL
 record for every open and close.
 
 Flow per cycle:
@@ -17,8 +17,9 @@ Risk controls (config.py): RISK_PER_TRADE_PCT sizing, MAX_POSITION_USD cap,
 MAX_OPEN_TRADES, one trade per coin, SYMBOL_COOLDOWN_MINUTES,
 DAILY_LOSS_LIMIT_PCT halt, and a pause switch (dashboard or DB state).
 
-Spot, long only. Default TRADING_MODE is "paper" — no real orders. Read the
-README "Auto trading" section before switching to testnet or live.
+Spot, long only. Two modes: DEMO ("paper", the default — no real orders) and
+REAL ("live" — real Binance orders with the keys from the credentials table).
+Read the README "Auto trading" section before switching to Real.
 
 Run standalone: python auto_trader.py   (don't also run it inside dashboard.py)
 """
@@ -33,6 +34,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import config
+import credentials
 import db
 import notifier
 import settings
@@ -47,16 +49,13 @@ _CANDLES = max(200, config.EMA_TREND + config.SR_LOOKBACK + 10)
 
 
 def binance_status() -> dict:
-    """What Binance mode would do and whether it's ready (no secrets exposed)."""
-    target = config.BINANCE_MODE
+    """Whether Real mode is ready (no secrets exposed)."""
     missing = []
     if not config.BINANCE_API_KEY:
-        missing.append("BINANCE_API_KEY")
+        missing.append("Binance API key")
     if not config.BINANCE_API_SECRET:
-        missing.append("BINANCE_API_SECRET")
-    if target == "live" and config.LIVE_TRADING_CONFIRM != "YES_REAL_MONEY":
-        missing.append("LIVE_TRADING_CONFIRM=YES_REAL_MONEY")
-    return {"target_mode": target, "ready": not missing, "missing": missing}
+        missing.append("Binance API secret")
+    return {"target_mode": "live", "api_url": config.BINANCE_API_URL, "ready": not missing, "missing": missing}
 
 
 def _fmt_local(ts: float) -> str:
@@ -73,12 +72,14 @@ def _utc_day_start() -> float:
 class AutoTrader(OrderDesk):
     def __init__(self, broker=None, on_update=None):
         db.init_db()
-        settings.apply_saved()          # dashboard-edited limits (SQLite) override config.py defaults
+        credentials.apply_saved()       # keys / URLs / SMTP from the MySQL credentials table
+        settings.apply_saved()          # dashboard-edited limits (MySQL) override config.py defaults
         self._claim_lock()
         # One broker per mode. New trades go to the active mode; open trades of
         # every mode keep being managed with their own broker, so switching
-        # Demo <-> Binance never leaves a position without its stop/targets.
-        first = broker or make_broker()
+        # Demo <-> Real never leaves a position without its stop/targets.
+        # Always starts in Demo; Real is chosen with the header switch.
+        first = broker or make_broker(config.TRADING_MODE)
         self.brokers = {first.mode: first}
         self.mode = first.mode
         self.on_update = on_update
@@ -90,7 +91,7 @@ class AutoTrader(OrderDesk):
         self.fbot_evals: dict[str, dict] = {}     # symbol -> last forecast-bot evaluation
         self.fbot_run: dict | None = None         # progress of a "Run forecast now" request
         self._last_snapshot: dict[str, float] = {}
-        db.log_event("INFO", f"Trader started in {self.mode.upper()} mode — auto trade "
+        db.log_event("INFO", f"Trader started in {config.MODE_NAMES[self.mode]} mode — auto trade "
                              f"{'ON' if self.auto_entries else 'OFF (manual trades only)'} "
                              f"(coins={list(config.COINS)}, timeframes={config.AUTO_TIMEFRAMES})")
 
@@ -116,7 +117,7 @@ class AutoTrader(OrderDesk):
         lock = db.get_state("trader_lock")
         if (lock and lock.get("pid") != os.getpid() and time.time() - lock.get("ts", 0) < 60
                 and self._pid_alive(lock.get("pid"))):
-            raise RuntimeError(f"Another trader (pid {lock['pid']}) is already running on {config.DB_PATH} — "
+            raise RuntimeError(f"Another trader (pid {lock['pid']}) is already running on {config.DB_LABEL} — "
                                "stop it first (dashboard and auto_trader.py must not both run).")
         self._heartbeat()
 
@@ -135,24 +136,40 @@ class AutoTrader(OrderDesk):
         return self.brokers[mode]
 
     def set_mode(self, mode: str) -> str | None:
-        """Switch where NEW trades go ('paper', 'testnet' or 'live'). Returns None or why it was refused."""
+        """Switch where NEW trades go ('paper' = Demo, 'live' = Real). Returns None or why it was refused."""
         if mode == self.mode:
             return None
+        name = config.MODE_NAMES.get(mode, mode.upper())
         try:
             with self._lock:
-                self._broker_for(mode)          # validates keys / LIVE_TRADING_CONFIRM
+                self._broker_for(mode)          # validates the Binance keys for Real
                 self.mode = mode
         except Exception as exc:
-            db.log_event("WARN", f"Switch to {mode.upper()} refused: {exc}")
+            db.log_event("WARN", f"Switch to {name} refused: {exc}")
             return str(exc)
-        db.log_event("WARN", f"Trading mode switched to {mode.upper()} — new trades now go to "
-                             f"{'Binance' if mode != 'paper' else 'the demo account'}")
-        notifier.alert(f"Trading mode switched to {mode.upper()}",
-                       f"New trades now use {mode}. Open trades in other modes keep being managed.", mode=mode)
+        db.log_event("WARN", f"Trading mode switched to {name} — new trades now go to "
+                             f"{'Binance (real money)' if mode == 'live' else 'the demo account'}")
+        notifier.alert(f"Trading mode switched to {name}",
+                       f"New trades now use {name}. Open trades in the other mode keep being managed.", mode=mode)
         self._notify_update()
         return None
 
-    # --- auto trade switch (Settings page, stored in SQLite) ----------------------
+    def reload_binance(self) -> str | None:
+        """Binance credentials/URL changed: rebuild the Real broker. Returns None or why it failed."""
+        with self._lock:
+            if "live" not in self.brokers:
+                return None             # built fresh with the new keys on the next switch to Real
+            try:
+                self.brokers["live"] = make_broker("live")
+            except Exception as exc:
+                if self.mode != "live" and not db.open_trades("live"):
+                    del self.brokers["live"]
+                db.log_event("ERROR", f"New Binance credentials rejected: {exc}", mode="live")
+                return str(exc)
+        db.log_event("WARN", "Binance credentials updated — Real broker reconnected", mode="live")
+        return None
+
+    # --- auto trade switch (Settings page, stored in MySQL) -----------------------
 
     @property
     def auto_entries(self) -> bool:
@@ -161,7 +178,7 @@ class AutoTrader(OrderDesk):
     def set_auto_trade(self, on: bool):
         settings.set_auto_trade(on)
         msg = (f"Auto trade {'ON' if on else 'OFF'} — the bot will "
-               + (f"open and close trades by itself on {self.mode.upper()}" if on
+               + (f"open and close trades by itself on {config.MODE_NAMES[self.mode]}" if on
                   else "not open new trades; open ones keep their stops/targets"))
         db.log_event("WARN", msg, mode=self.mode)
         notifier.alert(f"Auto trade switched {'ON' if on else 'OFF'}", msg, mode=self.mode)
@@ -774,34 +791,56 @@ class AutoTrader(OrderDesk):
             self._stop.wait(20)
 
     def account_status(self) -> dict:
-        """Demo account view: funds, equity, ledger, trades, bot, logs."""
-        b = self._broker_for("paper")
-        cash = b.quote_balance()
-        open_demo = db.open_trades("paper")
-        for t in open_demo:
+        """Account page for the active mode: funds, equity, ledger, trades, bot, logs.
+
+        Demo: play-money cash, deposits and the cash ledger. Real: the Binance USDT balance;
+        money moves in/out on Binance itself, so P&L is the bot's trades and the ledger is its fills."""
+        mode = self.mode
+        b = self._broker_for(mode)
+        try:
+            cash = b.quote_balance()
+            error = None
+        except Exception as exc:
+            cash, error = 0.0, f"Could not read the Binance balance: {exc}"
+        open_list = db.open_trades(mode)
+        for t in open_list:
             try:
                 t["price"] = b.price(t["symbol"])
             except Exception:
                 t["price"] = t["entry_price"]
             t["unrealized_usd"] = t["realized_usd"] + t["qty_open"] * t["price"] * (1 - config.TAKER_FEE) - t["cost_usd"]
-        invested = sum(t["qty_open"] * t["price"] for t in open_demo)
+        invested = sum(t["qty_open"] * t["price"] for t in open_list)
         equity = cash + invested
-        deposits = db.net_deposits("paper")
-        since = db.last_reset_ts("paper")
-        closed = [t for t in db.closed_trades("paper", 500) if (t["exit_time"] or 0) >= since]
+        since = db.last_reset_ts(mode) if mode == "paper" else 0.0
+        closed = [t for t in db.closed_trades(mode, 500) if (t["exit_time"] or 0) >= since]
         wins = [t for t in closed if (t["pnl_usd"] or 0) > 0]
+        realized = sum(t["pnl_usd"] or 0 for t in closed)
+        if mode == "paper":
+            deposits = db.net_deposits(mode)
+            pnl = equity - deposits
+            ledger = db.ledger(mode, 300)
+        else:
+            deposits = None
+            pnl = realized + sum(t["unrealized_usd"] for t in open_list)
+            ledger = [{"id": f["id"], "ts": f["ts"], "type": f["side"],
+                       "amount": -f["quote"] if f["side"] == "BUY" else f["quote"], "balance_after": None,
+                       "note": f"{f['side'].title()} {f['qty']:.8f} {f['symbol']} @ {f['price']:.4f} "
+                               f"(fee {f['fee_usd']:.4f}) — {f['source'] or ''}"}
+                      for f in db.fills(mode, 300)]
         s = self.fbot_settings()
         return {
+            "mode": mode, "error": error,
             "cash": cash, "invested": invested, "equity": equity, "net_deposits": deposits,
-            "pnl_usd": equity - deposits, "return_pct": (equity - deposits) / deposits * 100 if deposits else 0.0,
+            "pnl_usd": pnl, "return_pct": pnl / deposits * 100 if deposits else None,
             "closed_count": len(closed), "win_rate": 100 * len(wins) / len(closed) if closed else 0.0,
-            "realized_usd": sum(t["pnl_usd"] or 0 for t in closed),
-            "open": open_demo,
-            "trades": db.all_trades("paper", 300),
-            "ledger": db.ledger("paper", 300),
-            "equity_curve": db.equity_curve("paper", since),
-            "events": db.recent_events(150, mode="paper"),
+            "realized_usd": realized,
+            "open": open_list,
+            "trades": db.all_trades(mode, 300),
+            "ledger": ledger,
+            "equity_curve": db.equity_curve(mode, since),
+            "events": db.recent_events(150, mode=mode),
             "fbot": {**s, "evals": sorted(self.fbot_evals.values(), key=lambda e: -e["ts"]), "run": self.fbot_run,
+                     "demo_cash": cash if mode == "paper" else self._broker_for("paper").quote_balance(),
                      "horizons": list(config.FORECAST_HORIZONS), "coins_all": list(config.COINS)},
             "paused": self.paused,
         }

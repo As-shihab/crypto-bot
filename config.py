@@ -100,29 +100,29 @@ TAKER_FEE = 0.001              # 0.1% per side, typical Binance spot taker fee
 SLIPPAGE = 0.0005              # 0.05% assumed slippage per fill — tune to your pair's liquidity
 
 # --- Alerts (optional) -------------------------------------------------------
-# Leave both blank to just print signals to the console.
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+# Telegram token/chat and API URL live in the MySQL `credentials` table (Settings page).
+# Leave the token blank to just print signals to the console.
+TELEGRAM_API_URL = "https://api.telegram.org"
+TELEGRAM_BOT_TOKEN = ""
+TELEGRAM_CHAT_ID = ""
 
 # --- Live loop ---------------------------------------------------------------
 POLL_SECONDS = 60              # how often bot.py checks for a new closed candle
 
 # --- Auto trading ------------------------------------------------------------
-# TRADING_MODE:
-#   "paper"   — simulated fills at live prices with fees/slippage, no API key, no real orders (default)
-#   "testnet" — real orders on Binance's spot TESTNET (fake funds; keys from testnet.binance.vision)
-#   "live"    — REAL orders with REAL money. Also requires LIVE_TRADING_CONFIRM=YES_REAL_MONEY.
+# Two modes, switched on the Trade page (the last choice is saved in MySQL):
+#   "paper" = DEMO — simulated fills at live prices with fees/slippage, no API key, no real orders (default)
+#   "live"  = REAL — REAL orders with REAL money on Binance, using the keys in the `credentials` table
 # Spot only, long only: spot can't short, so a SELL signal only closes an open long.
-TRADING_MODE = os.getenv("TRADING_MODE", "paper").lower()
-LIVE_TRADING_CONFIRM = os.getenv("LIVE_TRADING_CONFIRM", "")
-BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
-BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
-# What the dashboard's "Binance" switch trades on: the spot testnet (BINANCE_TESTNET=1)
-# or the real exchange (default; still needs LIVE_TRADING_CONFIRM=YES_REAL_MONEY).
-BINANCE_TESTNET = os.getenv("BINANCE_TESTNET", "0") == "1"
-BINANCE_MODE = "testnet" if BINANCE_TESTNET else "live"
+TRADING_MODE = "paper"                  # startup default until a mode has been chosen
+MODE_NAMES = {"paper": "DEMO", "live": "REAL"}
+# Binance credentials + API URL come from the MySQL `credentials` table (credentials.py),
+# edited on the Settings page. These are only the defaults before it is loaded.
+BINANCE_API_KEY = ""
+BINANCE_API_SECRET = ""
+BINANCE_API_URL = "https://api.binance.com"   # spot REST base URL (market data + orders)
 
-# Auto trade on/off is a dashboard switch (Settings page), stored in SQLite — not here.
+# Auto trade on/off is a dashboard switch (Settings page), stored in MySQL — not here.
 AUTO_TIMEFRAMES = ["15m", "1h", "4h"]   # timeframes scanned for every coin in COINS
 AUTO_SCAN_SECONDS = 60                  # how often to scan for new entries
 AUTO_MANAGE_SECONDS = 10                # how often open trades are checked against stop/targets
@@ -143,7 +143,13 @@ STOP_LIMIT_BUFFER_PCT = 0.3             # exchange stop-limit price sits this % 
 PAPER_START_BALANCE = 1000.0            # USDT the paper account starts with
 QUOTE_ASSET = "USDT"
 
-DB_PATH = os.getenv("DB_PATH", "trading.db")
+# --- Database (the only thing read from .env) -----------------------------------
+MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
+MYSQL_PORT = int(os.getenv("MYSQL_PORT") or 3306)
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "crypto_bot")
+MYSQL_USER = os.getenv("MYSQL_USER", "root")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
+DB_LABEL = f"MySQL {MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
 DISPLAY_TZ = "Asia/Dhaka"   # UTC+6 — used for times written into logs/emails (the web app uses the same zone)
 
 # The dashboard can pause trading and close positions, so it only listens on
@@ -152,12 +158,12 @@ DASHBOARD_HOST = os.getenv("DASHBOARD_HOST", "127.0.0.1")
 DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "3100"))
 
 # --- Email (SMTP) --------------------------------------------------------------
-# Gmail: SMTP_HOST=smtp.gmail.com, SMTP_PORT=587, SMTP_USER=you@gmail.com and an
-# App Password (not your normal password) in SMTP_PASSWORD.
-SMTP_HOST = os.getenv("SMTP_HOST", "")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "0") == "1"   # 1 for port 465, else STARTTLS
-EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
-EMAIL_TO = os.getenv("EMAIL_TO", "")
+# Stored in the MySQL `credentials` table (Settings page). Gmail: SMTP_HOST=smtp.gmail.com,
+# SMTP_PORT=587, SMTP_USER=you@gmail.com and an App Password (not your normal password).
+SMTP_HOST = ""
+SMTP_PORT = 587
+SMTP_USER = ""
+SMTP_PASSWORD = ""
+SMTP_USE_SSL = False    # True for port 465, else STARTTLS
+EMAIL_FROM = ""
+EMAIL_TO = ""

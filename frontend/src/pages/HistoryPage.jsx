@@ -31,11 +31,11 @@ export default function HistoryPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">Trade history</h1>
-          <p className="page-sub">Every trade recorded in SQLite — Demo, Binance testnet and Binance live.</p>
+          <p className="page-sub">Every trade recorded in MySQL — Demo and Real.</p>
         </div>
         <div className="filters">
           <select value={mode} onChange={e => setMode(e.target.value)}>
-            <option value="">All accounts</option><option value="paper">Demo</option><option value="testnet">Binance testnet</option><option value="live">Binance live</option>
+            <option value="">All accounts</option><option value="paper">Demo</option><option value="live">Real</option>
           </select>
           <select value={coin} onChange={e => setCoin(e.target.value)}>
             <option value="">All coins</option>

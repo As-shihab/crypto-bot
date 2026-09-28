@@ -5,7 +5,7 @@ import {
 import { Line } from 'react-chartjs-2';
 import { useApp } from '../lib/AppContext';
 import { useTheme } from '../lib/theme';
-import { ClosedTradesTable, EventLog, OpenTradesTable } from '../components/TraderTables';
+import { ClosedTradesTable, EventLog, ModeBadge, OpenTradesTable } from '../components/TraderTables';
 import { dateTimeStr, fmt4, money, pnlClass, signed, timeStr, usd } from '../lib/format';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
@@ -21,6 +21,17 @@ function FundsCard({ a }) {
     traderCmd('account_funds', { action, amount: n }, confirmText);
     setAmt('');
   };
+  if (a.mode === 'live') {
+    return (
+      <div className="card">
+        <div className="card-head"><div className="section-title">Funds</div><span className="chip warn">Binance USDT</span></div>
+        <div className="kv"><span>Available USDT</span><b>{usd(a.cash)}</b></div>
+        <div className="kv"><span>In open trades</span><b>{usd(a.invested)}</b></div>
+        <div className="kv"><span>Realized P&amp;L (bot trades)</span><b className={pnlClass(a.realized_usd)}>{money(a.realized_usd)}</b></div>
+        <div className="placeholder" style={{ fontSize: '0.8rem', marginTop: '0.6rem' }}>Deposit and withdraw on Binance itself — the bot never moves money in or out.</div>
+      </div>
+    );
+  }
   return (
     <div className="card">
       <div className="card-head"><div className="section-title">Funds</div><span className="chip">demo USDT</span></div>
@@ -58,12 +69,12 @@ function BotCard({ a }) {
   // Saves any edits first (same request, so they apply to this run), then fits every selected coin now.
   const runNow = () => traderCmd('fbot_run_now', { settings: formSettings() },
     b.enabled ? null : 'The bot is OFF — this run will only show decisions, nothing will be bought. Run anyway?');
-  const perTrade = a.cash * (parseFloat(form.alloc_pct) || 0) / 100;
+  const perTrade = b.demo_cash * (parseFloat(form.alloc_pct) || 0) / 100;
 
   return (
     <div className="card">
       <div className="card-head">
-        <div className="section-title">Forecast bot</div>
+        <div className="section-title">Forecast bot {a.mode === 'live' && <span className="chip">trades Demo</span>}</div>
         <div className="segmented">
           <button type="button" className={!b.enabled ? 'active' : ''} onClick={() => save({ enabled: false })}>Off</button>
           <button type="button" className={b.enabled ? 'active' : ''} disabled={!form.coins.length} onClick={() => save({ enabled: true })}>On</button>
@@ -116,7 +127,7 @@ function EquityChart({ points, deposits }) {
   const text = dark ? '#a6b7c4' : '#6a6d70';
   const grid = dark ? '#2b3947' : '#eef0f5';
   const last = points[points.length - 1].equity;
-  const color = last >= deposits ? '#16a34a' : '#ef4444';
+  const color = last >= (deposits ?? points[0].equity) ? '#16a34a' : '#ef4444';
   return (
     <div style={{ position: 'relative', height: '100%', minHeight: 140 }}>
       <Line
@@ -124,7 +135,7 @@ function EquityChart({ points, deposits }) {
           labels: points.map(p => timeStr(p.ts)),
           datasets: [
             { label: 'Equity', data: points.map(p => p.equity), borderColor: color, backgroundColor: color + '22', fill: true, pointRadius: 0, tension: 0.2, borderWidth: 2 },
-            { label: 'Net deposited', data: points.map(() => deposits), borderColor: text, borderDash: [4, 4], pointRadius: 0, borderWidth: 1 },
+            ...(deposits == null ? [] : [{ label: 'Net deposited', data: points.map(() => deposits), borderColor: text, borderDash: [4, 4], pointRadius: 0, borderWidth: 1 }]),
           ],
         }}
         options={{
@@ -172,7 +183,7 @@ function Ledger({ rows }) {
             <td style={{ whiteSpace: 'nowrap' }}>{dateTimeStr(l.ts)}</td>
             <td><span className={'chip' + (l.type === 'DEPOSIT' || l.type === 'RESET' ? ' ok' : l.type === 'WITHDRAW' ? ' warn' : '')}>{l.type}</span></td>
             <td className={'num ' + pnlClass(l.amount)}>{money(l.amount)}</td>
-            <td className="num">{usd(l.balance_after)}</td>
+            <td className="num">{l.balance_after == null ? '—' : usd(l.balance_after)}</td>
             <td className="inline-meta">{l.note}</td>
           </tr>
         ))}
@@ -181,34 +192,39 @@ function Ledger({ rows }) {
   );
 }
 
-const TABS = [['open', 'Open'], ['trades', 'Trades'], ['ledger', 'Ledger'], ['logs', 'Logs']];
-
 export default function AccountPage() {
   const { account: a, trader } = useApp();
   const [tab, setTab] = useState('open');
   if (!trader) return <span className="placeholder">Connecting...</span>;
   if (!trader.enabled) return <div className="verdict bad">Trader is not running{trader.error ? `: ${trader.error}` : ''}.</div>;
   if (!a) return <span className="placeholder">Loading account...</span>;
+  const real = a.mode === 'live';
+  const tabs = [['open', 'Open'], ['trades', 'Trades'], ['ledger', real ? 'Fills' : 'Ledger'], ['logs', 'Logs']];
 
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <h1 className="page-title">Demo account</h1>
-          <p className="page-sub">Invest play money, let the forecast bot (or you, from the Trade page) trade it, and see every transaction and log.</p>
+          <h1 className="page-title">Account</h1>
+          <p className="page-sub">{real
+            ? 'Your Binance account as the bot trades it: USDT balance, open trades, every fill and log. Switch Demo / Real in the header.'
+            : 'Invest play money, let the forecast bot (or you, from the Trade page) trade it, and see every transaction and log. Switch Demo / Real in the header.'}</p>
         </div>
         <div className="trade-head">
-          <span className="entry-badge entry-wait">DEMO</span>
+          <ModeBadge mode={a.mode} />
           <span className={'chip ' + (a.fbot.enabled ? 'ok' : 'warn')}>forecast bot {a.fbot.enabled ? `ON · ${a.fbot.horizon}` : 'OFF'}</span>
           {a.paused && <span className="chip warn">entries paused</span>}
         </div>
       </div>
+      {a.error && <div className="verdict bad" style={{ marginTop: 0 }}>{a.error}</div>}
 
       <div className="kpi-row">
         <div className="stat"><div className="label">Equity</div><div className="value neutral">{usd(a.equity)}</div></div>
-        <div className="stat"><div className="label">Cash</div><div className="value neutral">{usd(a.cash)}</div></div>
-        <div className="stat"><div className="label">Net deposited</div><div className="value neutral">{usd(a.net_deposits)}</div></div>
-        <div className="stat"><div className="label">Profit / loss</div><div className={'value ' + pnlClass(a.pnl_usd)}>{money(a.pnl_usd)} <span className="inline-meta">{signed(a.return_pct)}</span></div></div>
+        <div className="stat"><div className="label">{real ? 'USDT available' : 'Cash'}</div><div className="value neutral">{usd(a.cash)}</div></div>
+        {real
+          ? <div className="stat"><div className="label">Realized P&amp;L</div><div className={'value ' + pnlClass(a.realized_usd)}>{money(a.realized_usd)}</div></div>
+          : <div className="stat"><div className="label">Net deposited</div><div className="value neutral">{usd(a.net_deposits)}</div></div>}
+        <div className="stat"><div className="label">Profit / loss{real ? ' (bot trades)' : ''}</div><div className={'value ' + pnlClass(a.pnl_usd)}>{money(a.pnl_usd)} {a.return_pct != null && <span className="inline-meta">{signed(a.return_pct)}</span>}</div></div>
         <div className="stat"><div className="label">Closed trades · win rate</div><div className="value neutral">{a.closed_count} · {a.closed_count ? a.win_rate.toFixed(0) + '%' : '—'}</div></div>
       </div>
 
@@ -221,17 +237,17 @@ export default function AccountPage() {
           <div className="account-right">
             <div className="two-col" style={{ gridTemplateColumns: '1fr 1.3fr' }}>
               <div className="card fill">
-                <div className="card-head"><div className="section-title">Equity curve</div><span className="inline-meta">since last reset</span></div>
+                <div className="card-head"><div className="section-title">Equity curve</div><span className="inline-meta">{real ? 'Binance USDT + open trades' : 'since last reset'}</span></div>
                 <div className="scroll" style={{ overflow: 'hidden' }}><EquityChart points={a.equity_curve} deposits={a.net_deposits} /></div>
               </div>
               <div className="card fill">
-                <div className="card-head"><div className="section-title">Bot decisions</div><span className="inline-meta">{a.fbot.coins.join(', ')}</span></div>
+                <div className="card-head"><div className="section-title">Bot decisions</div><span className="inline-meta">{a.fbot.coins.join(', ')}{real ? ' · buys on Demo' : ''}</span></div>
                 <div className="scroll"><BotDecisions evals={a.fbot.evals} enabled={a.fbot.enabled} /></div>
               </div>
             </div>
             <div className="card fill">
               <div className="side-tabs" style={{ marginBottom: '0.5rem' }}>
-                {TABS.map(([k, label]) => (
+                {tabs.map(([k, label]) => (
                   <button key={k} type="button" className={'side-tab' + (tab === k ? ' active' : '')} onClick={() => setTab(k)}>
                     {label}{k === 'open' && a.open.length ? ` (${a.open.length})` : ''}
                   </button>

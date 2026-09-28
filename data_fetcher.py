@@ -17,17 +17,32 @@ import ccxt
 import config
 
 
+_BINANCE_DEFAULT_URL = "https://api.binance.com"
+
+
+def apply_binance_url(ex):
+    """Point ccxt's Binance spot endpoints at config.BINANCE_API_URL (credentials table)."""
+    base = (config.BINANCE_API_URL or _BINANCE_DEFAULT_URL).rstrip("/")
+    if ex.id != "binance" or base == _BINANCE_DEFAULT_URL:
+        return ex
+    api = ex.urls.get("api") or {}
+    for k, url in api.items():
+        if isinstance(url, str) and url.startswith(_BINANCE_DEFAULT_URL):
+            api[k] = base + url[len(_BINANCE_DEFAULT_URL):]
+    return ex
+
+
 def get_exchange(exchange_id: str = config.EXCHANGE_ID):
     """Instantiate a ccxt exchange object for public market-data calls."""
     klass = getattr(ccxt, exchange_id)
-    return klass({
+    return apply_binance_url(klass({
         "enableRateLimit": True,
         # Restrict to spot markets only — some exchanges (e.g. Binance)
         # otherwise load spot + margin + futures markets on init, which
         # hits extra endpoints (like dapi.binance.com) that may be
         # unreachable/geo-blocked even when spot isn't.
         "options": {"defaultType": "spot", "fetchMarkets": ["spot"]},
-    })
+    }))
 
 
 def fetch_ohlcv(

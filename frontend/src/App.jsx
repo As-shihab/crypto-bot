@@ -36,16 +36,37 @@ function Sidebar() {
         {item('/', 'Dashboard', 'dashboard')}
         <div className="nav-group">Trade</div>
         {item('/trade', 'Trade', 'trade', openCount || null)}
-        {item('/account', 'Demo account', 'wallet', account && account.fbot && account.fbot.enabled ? 'bot' : null)}
+        {item('/account', 'Account', 'wallet', account && account.fbot && account.fbot.enabled ? 'bot' : null)}
         {item('/auto', 'Auto trader', 'auto')}
         {item('/history', 'History', 'history')}
-        <div className="nav-group">System</div>
-        {item('/settings', 'Settings', 'settings')}
       </nav>
       <div className="sidebar-foot">
-        {trader && trader.enabled ? <>Account: <b>{MODE_LABEL[trader.mode]}</b><br />Auto entries: {trader.auto_entries ? 'on' : 'off'}</> : null}
+        {trader && trader.enabled ? <>Mode: <b>{MODE_LABEL[trader.mode]}</b><br />Auto entries: {trader.auto_entries ? 'on' : 'off'}</> : null}
       </div>
+      {/* Pinned to the bottom of the sidebar, whatever the page length. */}
+      <nav className="side-nav side-nav-bottom">
+        {item('/settings', 'Settings', 'settings')}
+      </nav>
     </aside>
+  );
+}
+
+// Demo | Real — which account every page shows and where new trades go. Starts on Demo.
+function ModeSwitch() {
+  const { trader, traderCmd } = useApp();
+  const running = !!(trader && trader.enabled);
+  const mode = running ? trader.mode : 'paper';
+  const realReady = running && trader.binance && trader.binance.ready;
+  const toReal = () => traderCmd('trader_set_mode', { mode: 'real' },
+    'Switch to REAL mode?\n\nOrders from the Trade page and the auto trader will be REAL orders with REAL money on your Binance account.\n\nContinue?');
+  return (
+    <div className="shell-switch" role="group" aria-label="Account mode">
+      <button type="button" className={mode === 'paper' ? 'active' : ''} disabled={!running}
+        onClick={() => mode !== 'paper' && traderCmd('trader_set_mode', { mode: 'demo' })}>Demo</button>
+      <button type="button" className={mode === 'live' ? 'active live' : ''} disabled={!running || !realReady}
+        title={realReady ? 'Real orders on Binance' : 'Add your Binance API key and secret in Settings > Credentials first'}
+        onClick={() => mode !== 'live' && toReal()}>Real</button>
+    </div>
   );
 }
 
@@ -56,9 +77,8 @@ function Toast() {
 }
 
 export default function App() {
-  const { config, connected, trader } = useApp();
+  const { config, connected } = useApp();
   const { dark, toggle } = useTheme();
-  const mode = trader && trader.enabled ? trader.mode : config ? config.trading.mode : null;
 
   return (
     <>
@@ -68,7 +88,7 @@ export default function App() {
           {config ? config.exchange.charAt(0).toUpperCase() + config.exchange.slice(1) : ''} Trading Bot
         </div>
         <div className="shellbar-right">
-          {mode && <span className={'mode-pill ' + mode}>{MODE_LABEL[mode] || mode.toUpperCase()}</span>}
+          <ModeSwitch />
           <div className="live-pill" title={connected ? 'Live' : 'Offline'}><span className={'live-dot' + (connected ? '' : ' off')} /></div>
           <button type="button" className="theme-switch-btn" onClick={toggle}>{dark ? 'Light mode' : 'Dark mode'}</button>
         </div>

@@ -97,27 +97,16 @@ function MarketTrades({ onPick }) {
 // --- account panel -------------------------------------------------------------------
 
 function AccountPanel() {
-  const { trader, config, traderCmd, account } = useApp();
+  const { trader, config, account } = useApp();
   const running = trader && trader.enabled;
   const mode = running ? trader.mode : config.trading.mode;
-  const bin = running ? trader.binance : null;
-  const binTarget = bin ? bin.target_mode : config.trading.binance_mode;
-  const binReady = !!(bin && bin.ready);
   const bal = running && trader.desk ? trader.desk.balances : null;
-  const toBinance = () => traderCmd('trader_set_mode', { mode: 'binance' },
-    binTarget === 'live'
-      ? 'Switch to BINANCE LIVE?\n\nOrders from this page will be REAL orders with REAL money on your Binance account.\n\nContinue?'
-      : 'Switch to Binance TESTNET? Orders go to the Binance spot testnet (fake funds).');
 
   return (
     <div className="card">
       <div className="card-head">
         <div className="section-title">Account</div>
-        <div className="segmented" role="group" aria-label="Trading account">
-          <button type="button" className={mode === 'paper' ? 'active' : ''} disabled={!running} onClick={() => traderCmd('trader_set_mode', { mode: 'demo' })}>Demo</button>
-          <button type="button" className={(mode !== 'paper' ? 'active' : '') + (mode === 'live' ? ' live' : '')}
-            disabled={!running || !binReady} title={binReady ? 'Binance ' + binTarget : 'Add Binance keys to .env first'} onClick={toBinance}>Binance</button>
-        </div>
+        <span className="inline-meta" title="Switch Demo / Real in the header">{MODE_LABEL[mode]}</span>
       </div>
       {!running && <div className="verdict bad" style={{ marginTop: 0 }}>Trader not running{trader && trader.error ? ': ' + trader.error : ''}</div>}
       {bal && (
@@ -177,9 +166,7 @@ function OrderSide({ side, type, price, setPrice, lastPrice, bal, symbol, live }
     const payload = { symbol, side, type, price: type === 'LIMIT' ? price : null, tp: buy && useTpSl ? tp : null, sl: buy && useTpSl ? sl : null };
     if (buy && type === 'MARKET') payload.quote = total; else payload.qty = amount;
     const what = `${type} ${side} ${buy && type === 'MARKET' ? '$' + total + ' of ' + base : amount + ' ' + base}${type === 'LIMIT' ? ' @ ' + price : ' at market'}`;
-    const confirmText = mode === 'live'
-      ? `REAL MONEY on Binance:\n\n${what}\n\nPlace this order?`
-      : (mode === 'testnet' ? `Binance testnet: ${what}\n\nPlace this order?` : null);
+    const confirmText = mode === 'live' ? `REAL MONEY on Binance:\n\n${what}\n\nPlace this order?` : null;
     traderCmd('order_place', payload, confirmText);
     setAmount(''); setTotal('');
   };
@@ -211,7 +198,7 @@ function OrderSide({ side, type, price, setPrice, lastPrice, bal, symbol, live }
         </>
       )}
       <button type="button" className={buy ? 'buy-btn' : 'danger'} disabled={disabled} onClick={submit}>
-        {buy ? 'Buy' : 'Sell'} {base}{mode !== 'paper' ? ' on Binance' : ''}
+        {buy ? 'Buy' : 'Sell'} {base}{mode === 'live' ? ' on Binance' : ''}
       </button>
     </div>
   );

@@ -2,7 +2,7 @@
 Email notifications (SMTP) for the auto trader: one email per trade open,
 per close, and for halts/errors. Sends on a background thread so a slow
 mail server never delays an order. Silently console-only if SMTP isn't
-configured in .env.
+configured (Settings > Credentials, stored in MySQL).
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def send_email(subject: str, body: str, wait: bool = False) -> str | None:
     """Queue an email (background thread). With wait=True, block and return None or the error."""
     print(f"[notifier] {subject}")
     if not email_configured():
-        return "Email not configured (SMTP_HOST / EMAIL_FROM / EMAIL_TO in .env)"
+        return "Email not configured (SMTP host / From / To in Settings > Credentials)"
     if wait:
         return _send(subject, body)
     threading.Thread(target=_send, args=(subject, body), daemon=True).start()
@@ -58,7 +58,7 @@ def _fmt(v, nd=4):
 
 
 def trade_opened(t: dict):
-    subject = f"[{t['mode'].upper()}] OPEN LONG {t['symbol']} {t['timeframe']} @ {_fmt(t['entry_price'])}"
+    subject = f"[{config.MODE_NAMES.get(t['mode'], t['mode'])}] OPEN LONG {t['symbol']} {t['timeframe']} @ {_fmt(t['entry_price'])}"
     body = "\n".join([
         f"Trade #{t['id']} opened ({t['mode']} mode)",
         "",
@@ -82,7 +82,7 @@ def trade_opened(t: dict):
 def trade_closed(t: dict):
     pnl = t.get("pnl_usd") or 0.0
     sign = "+" if pnl >= 0 else ""
-    subject = (f"[{t['mode'].upper()}] CLOSE {t['symbol']} {t['timeframe']} "
+    subject = (f"[{config.MODE_NAMES.get(t['mode'], t['mode'])}] CLOSE {t['symbol']} {t['timeframe']} "
                f"{sign}{pnl:.2f} {config.QUOTE_ASSET} ({sign}{(t.get('pnl_pct') or 0):.2f}%) — {t['exit_reason']}")
     held_min = ((t.get("exit_time") or 0) - t["entry_time"]) / 60
     body = "\n".join([
@@ -102,4 +102,4 @@ def trade_closed(t: dict):
 
 
 def alert(subject: str, body: str = "", mode: str | None = None):
-    send_email(f"[{(mode or config.TRADING_MODE).upper()}] {subject}", body or subject)
+    send_email(f"[{config.MODE_NAMES.get(mode or config.TRADING_MODE, mode)}] {subject}", body or subject)

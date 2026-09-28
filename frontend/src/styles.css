@@ -36,9 +36,13 @@ code { font-size:0.85em; background:var(--bg); padding:0.05rem 0.3rem; border-ra
 .shellbar-left { display:flex; align-items:center; gap:0.6rem; font-size:0.95rem; font-weight:600; }
 .shellbar-icon { width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,0.15); display:flex; align-items:center; justify-content:center; font-size:0.8rem; }
 .shellbar-right { display:flex; align-items:center; gap:0.7rem; }
-.mode-pill { font-size:0.72rem; font-weight:700; padding:0.2rem 0.55rem; border-radius:999px; background:rgba(255,255,255,0.15); letter-spacing:0.03em; }
-.mode-pill.live { background:#bb0000; }
-.mode-pill.testnet { background:#e9730c; }
+/* Demo | Real switch in the header: which account every page shows. */
+.shell-switch { display:flex; border:1px solid rgba(255,255,255,0.25); border-radius:var(--radius); overflow:hidden; }
+.shell-switch button { background:transparent; border:none; border-radius:0; color:rgba(255,255,255,0.8); padding:0.3rem 0.75rem; font-size:0.78rem; font-weight:700; letter-spacing:0.03em; cursor:pointer; }
+.shell-switch button + button { border-left:1px solid rgba(255,255,255,0.25); }
+.shell-switch button.active { background:rgba(255,255,255,0.2); color:#fff; }
+.shell-switch button.active.live { background:#bb0000; }
+.shell-switch button:disabled:not(.active) { opacity:0.45; cursor:not-allowed; }
 .live-pill { display:flex; align-items:center; justify-content:center; width:28px; height:28px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:50%; }
 .live-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#4ecb73; }
 .live-dot.off { background:#89919a; }
@@ -62,6 +66,7 @@ code { font-size:0.85em; background:var(--bg); padding:0.05rem 0.3rem; border-ra
 .nav-item.active { background:var(--accent); color:#fff; }
 .nav-badge { margin-left:auto; font-size:0.7rem; background:var(--pos); color:#fff; border-radius:999px; padding:0.05rem 0.45rem; }
 .sidebar-foot { margin-top:auto; font-size:0.75rem; color:var(--text-faint); padding:0 0.75rem; line-height:1.5; }
+.side-nav-bottom { padding-top:0.6rem; border-top:1px solid var(--border-soft); }
 
 /* Every page fits the viewport; only panels inside it scroll. */
 .main { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; padding:0.9rem 1.25rem; overflow:hidden; }
@@ -311,6 +316,14 @@ table.markets-table tr.mkt-row.active { background:var(--accent-soft); }
 }
 
 .settings-grid .rules-card { grid-column: span 2; grid-row: span 2; }
+/* Credentials take a full-width row below the others, so the Settings page scrolls instead of squeezing. */
+.settings-page .page-body { overflow-y:auto; }
+.settings-page .settings-grid { height:auto; grid-auto-rows:minmax(250px, auto); }
+.settings-grid .creds-card { grid-column: 1 / -1; }
+.cred-group + .cred-group { margin-top:0.9rem; padding-top:0.8rem; border-top:1px solid var(--border-soft); }
+.cred-title { display:flex; align-items:center; gap:0.5rem; font-weight:600; font-size:0.85rem; margin-bottom:0.5rem; }
+.cred-input { display:flex; gap:0.4rem; }
+.cred-input input { flex:1; min-width:0; padding:0.35rem 0.5rem; }
 .rules-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:0.55rem 1rem; }
 .rule { display:flex; flex-direction:column; gap:0.2rem; font-size:0.8rem; }
 .rule > span:first-child { font-weight:600; color:var(--text); }
@@ -376,6 +389,7 @@ table.markets-table tr.mkt-row.active { background:var(--accent-soft); }
   .sidebar { width:100%; flex-direction:row; padding:0.4rem 0.5rem; border-right:none; border-bottom:1px solid var(--border); overflow-x:auto; }
   .side-nav { flex-direction:row; }
   .nav-group, .sidebar-foot { display:none; }
+  .side-nav-bottom { padding-top:0; border-top:none; margin-left:auto; }
   .nav-item { white-space:nowrap; }
   .main { padding:0.75rem 16px; }
   .stats-row { grid-template-columns: 1fr; }

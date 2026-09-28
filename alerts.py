@@ -8,7 +8,7 @@ import config
 def send_telegram(message: str) -> bool:
     if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
         return False
-    url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"{config.TELEGRAM_API_URL}/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
         resp = requests.post(
             url,

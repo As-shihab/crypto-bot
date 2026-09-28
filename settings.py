@@ -1,5 +1,5 @@
 """
-Trading settings editable from the dashboard's Settings page, stored in SQLite
+Trading settings editable from the dashboard's Settings page, stored in MySQL
 (`state` table) instead of .env / config.py.
 
 config.py holds the defaults; saved values override them at startup

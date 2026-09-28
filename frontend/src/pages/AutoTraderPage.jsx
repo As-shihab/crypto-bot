@@ -33,7 +33,7 @@ export default function AutoTraderPage() {
 
       {!trader.enabled && (
         <div className="verdict bad" style={{ marginTop: 0 }}>
-          Trader is not running{trader.error ? <>: <b>{trader.error}</b></> : ''}. Check <code>.env</code> and restart <code>python dashboard.py</code>.
+          Trader is not running{trader.error ? <>: <b>{trader.error}</b></> : ''}. Check the MySQL login in <code>.env</code> and restart <code>python dashboard.py</code>.
         </div>
       )}
       {trader.enabled && !trader.auto_entries && (

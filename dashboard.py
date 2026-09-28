@@ -10,9 +10,10 @@ Runs a Flask + Socket.IO server (default port 3100):
   - On-demand backtest (backtester.py) for the selected coin + timeframe.
   - On-demand Prophet forecast (forecast.py) for the selected horizon.
   - Auto trade panel (auto_trader.py), switched on/off in Settings: status,
-    open/closed trades from SQLite, pause/resume, manual close.
+    open/closed trades from MySQL, pause/resume, manual close.
 
-Places orders from the Trade page order form, and by itself when Auto trade is ON in Settings (demo by default).
+Places orders from the Trade page order form, and by itself when Auto trade is ON in Settings.
+Two modes, switched on the Trade page: Demo (simulated) and Real (Binance, keys in Settings > Credentials).
 
 Run: python dashboard.py
 """
@@ -40,7 +41,7 @@ app.json.sort_keys = False   # keep config.COINS / TIME_OPTIONS order for the fr
 # Same-origin sockets only: this server can pause trading / close positions,
 # so no other web page open in your browser may connect to it.
 socketio = SocketIO(app, async_mode="threading")
-_trader = None        # AutoTrader: manages manual + auto trades; opens trades itself only when Auto trade is ON (Settings, SQLite)
+_trader = None        # AutoTrader: manages manual + auto trades; opens trades itself only when Auto trade is ON (Settings, MySQL)
 _trader_error = None  # why the trader couldn't start (bad keys, another trader running, ...)
 _DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
 
@@ -345,13 +346,12 @@ def api_config():
         "backtest_candles": config.BACKTEST_CANDLES,
         "trading": {
             "mode": _trader.mode if _trader else config.TRADING_MODE,
-            "binance_mode": config.BINANCE_MODE,
             "auto_entries": _trader.auto_entries if _trader else False,
             "trader_running": _trader is not None,
             "trader_error": _trader_error,
             "email_configured": notifier.email_configured(),
             "email_to": config.EMAIL_TO,
-            "db_path": config.DB_PATH,
+            "database": config.DB_LABEL,
             "limits": {
                 "risk_per_trade_pct": config.RISK_PER_TRADE_PCT,
                 "max_position_usd": config.MAX_POSITION_USD,
@@ -688,9 +688,9 @@ def ws_trader_open_manual(data):
 
 @socketio.on("trader_set_mode")
 def ws_trader_set_mode(data):
-    """Trade page switch: 'demo' -> paper account, 'binance' -> config.BINANCE_MODE (testnet or live)."""
+    """Trade page switch: 'demo' -> simulated paper account, 'real' -> Binance with real money."""
     choice = (data or {}).get("mode")
-    mode = {"demo": "paper", "binance": config.BINANCE_MODE}.get(choice)
+    mode = {"demo": "paper", "real": "live"}.get(choice)
     sid = request.sid
     if mode is None:
         emit("trader_result", {"ok": False, "message": f"Unknown mode '{choice}'"})
@@ -701,7 +701,7 @@ def ws_trader_set_mode(data):
 
     def work():
         err = _trader.set_mode(mode)
-        label = "Demo" if mode == "paper" else f"Binance ({mode})"
+        label = "Demo" if mode == "paper" else "Real (Binance)"
         socketio.emit("trader_result", {"ok": err is None,
                                         "message": f"Refused — {err}" if err else f"Now trading in {label} mode"}, to=sid)
         _push_trader()
@@ -753,9 +753,43 @@ def ws_trader_test_email(*_args):
     sid = request.sid
 
     def work():
-        err = notifier.send_email(f"[{config.TRADING_MODE.upper()}] Test email from the trading bot",
+        mode = _trader.mode if _trader else config.TRADING_MODE
+        err = notifier.send_email(f"[{config.MODE_NAMES[mode]}] Test email from the trading bot",
                                   "If you can read this, trade open/close emails will reach you.", wait=True)
         socketio.emit("trader_result", {"ok": err is None, "message": err or f"Test email sent to {config.EMAIL_TO}"}, to=sid)
+    threading.Thread(target=work, daemon=True).start()
+
+
+@socketio.on("credentials_get")
+def ws_credentials_get(*_args):
+    import credentials
+    emit("credentials", credentials.public_view())
+
+
+@socketio.on("credentials_update")
+def ws_credentials_update(data):
+    """{values: {NAME: value}, clear?: [NAME]} — blank secrets keep the stored value."""
+    import credentials
+    import db
+    data = data or {}
+    sid = request.sid
+
+    def work():
+        changed, errors = credentials.update({**(data.get("values") or {}), "clear": data.get("clear") or []})
+        msg = "; ".join(errors) if errors else ("Credentials saved — active now" if changed else "No changes")
+        ok = not errors
+        if changed:
+            # Names only — values never go into the event log.
+            db.log_event("WARN", f"Credentials changed from dashboard: {', '.join(changed)}",
+                         mode=_trader.mode if _trader else None)
+            if _trader is not None and any(n in credentials.BINANCE_FIELDS for n in changed):
+                err = _trader.reload_binance()
+                if err:
+                    ok, msg = False, f"Saved, but Binance rejected the new credentials: {err}"
+        socketio.emit("trader_result", {"ok": ok, "message": msg}, to=sid)
+        socketio.emit("credentials", credentials.public_view())
+        if _trader is not None:
+            _push_trader()
     threading.Thread(target=work, daemon=True).start()
 
 
@@ -782,11 +816,13 @@ def ws_run_best_time(data):
 
 
 if __name__ == "__main__":
+    import credentials
+    credentials.apply_saved()   # MySQL: create tables, load Binance URL/keys, SMTP, Telegram
     threading.Thread(target=_live_signal_loop, daemon=True).start()
     threading.Thread(target=_realtime_price_loop, daemon=True).start()
     threading.Thread(target=_market_depth_loop, daemon=True).start()
     # The trader always runs so manual trades get their stops/targets managed;
-    # it only opens trades by itself when Auto trade is switched on in Settings (SQLite).
+    # it only opens trades by itself when Auto trade is switched on in Settings (MySQL).
     try:
         from auto_trader import AutoTrader
         _trader = AutoTrader(on_update=_push_trader)

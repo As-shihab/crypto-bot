@@ -17,12 +17,14 @@ import time
 import traceback
 
 import config
+import credentials
 from data_fetcher import get_exchange, fetch_ohlcv
 from signal_engine import generate_signal
 from alerts import notify
 
 
 def main():
+    credentials.apply_saved()   # Telegram token/chat + Binance API URL from MySQL
     exchange = get_exchange()
     print(f"Watching {config.SYMBOL} on {config.EXCHANGE_ID}, timeframe {config.TIMEFRAME}.")
     print(f"Polling every {config.POLL_SECONDS}s for a newly closed candle. Ctrl+C to stop.\n")
